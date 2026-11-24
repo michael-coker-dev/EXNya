@@ -1,101 +1,37 @@
-# EXNYA — Security notes
+# EXNYA — Security status
 
-What protects the app, what you still need to switch on, and what is
-deliberately left to the backend.
+This document describes the security posture visible in this repository. It is not a penetration-test report, and it does not establish that the live Supabase project is configured safely.
 
-## 1. What is already in place (code)
+> **Important: prototype only.** Do not use EXNYA to hold funds, execute real trades, collect real identity documents or provide financial services.
 
-| Area | Control |
-|---|---|
-| Scripts | `app-base.js` / `settings.js` load in `<head>` before any page code uses `App.*` — a page can no longer run half-initialised |
-| XSS | Every value that comes back from the database or from another user goes through `App.esc()` before it reaches `innerHTML`. `textContent` used where no markup is needed |
-| Clickjacking | Every page has a `Content-Security-Policy` with `frame-ancestors 'none'` plus a JS framebuster for older browsers |
-| Tab-nabbing | `rel="noopener noreferrer"` forced on every `target="_blank"` link |
-| Referrer leakage | `strict-origin-when-cross-origin` — tokens in URLs are never sent to third parties |
-| CSP | `object-src 'none'`, no `eval`, no inline event handlers from data, connection allow-list limited to your Supabase project, Coinlore and ipapi |
-| Secrets | Only the **anon** key is in the browser. The `service_role` key and the database password appear nowhere in the repo |
-| 2FA | Authenticator app (TOTP) via Supabase Auth MFA. The secret never leaves Supabase's `auth.mfa_factors`; `profiles.totp_secret` is unused |
-| 2FA bypass | `security.html` and `admin.html` require a **verified** session, so a password alone cannot reach them |
-| Session | `getSession()` only — no `refreshSession()` race that logs people out |
-| Enumeration | Supabase returns the same `Invalid login credentials` for unknown users and wrong passwords |
+## What is present in the source
 
-## 2. What you must switch on (dashboard)
+- A browser Supabase client configured with the project URL and public anon key. A Supabase anon/publishable key is designed to be public; security depends on correctly configured Row Level Security and backend permissions.
+- SQL migration files that enable RLS and define user/admin policies.
+- Security-definer database functions for swap and P2P state transitions.
+- A password-reset Edge Function source file that expects service credentials and email-provider secrets to be stored in the Edge Function environment, not in browser code.
+- A Content Security Policy meta tag on several pages. The current policy permits inline scripts and styles, so it is not a strict nonce/hash-based CSP.
 
-These are settings, not code. None of them are on by default in a fresh project.
+These are source-code observations only. The actual deployed database, storage bucket, Auth settings, Edge Functions and secrets have not been verified.
 
-### Authentication → Providers → Email
-- [ ] **Confirm email = ON** for production. Right now a stranger can register
-      with someone else's address and use it. (Signup currently works without
-      confirmation because auto-confirm is on.)
-- [ ] **Enable leaked password protection** (HaveIBeenPwned check)
-- [ ] **Minimum password length = 8**, require letters and digits
-- [ ] **Maximum signup rate** / CAPTCHA (Turnstile) — stops scripted account creation
+## Important limitations found during repository review
 
-### Authentication → URL Configuration
-- [ ] **Site URL** = your real domain
-- [ ] **Redirect allow-list** = your real domain only (no wildcards)
+1. **Swap pricing is client supplied.** The browser sends the price object to `swap_execute`. The SQL function validates the submitted quote against that same supplied object; it does not independently obtain a trusted market price. This is not safe for real-value exchange.
+2. **P2P is not real escrow.** The SQL describes escrow as conceptual and does not demonstrate funds being held by a trusted custodian or on-chain contract. The transition function also needs stricter role-specific authorization for each action before any real-value use.
+3. **Deployment state is unknown.** A migration file in GitHub does not mean it has been applied to Supabase. Confirm the live schema, grants, RLS policies, Storage policies and Edge Function configuration separately.
+4. **Security headers need deployment configuration.** A meta CSP does not replace HTTP response headers such as HSTS, `X-Content-Type-Options` and an appropriate `Permissions-Policy`.
+5. **KYC handling needs a production review.** Keep the KYC bucket private, enforce file size and MIME restrictions, verify object ownership server-side, and use short-lived signed URLs only where necessary.
 
-### Authentication → Sessions
-- [ ] **JWT expiry** 3600s, **refresh token rotation ON**,
-      **reuse interval** 10s, **time-box user sessions** if you want forced re-login
+## Before any production use
 
-### Project Settings → API
-- [ ] **Exposed schemas**: `public` only (never `auth`, `storage`, `extensions`)
-- [ ] If you ever put a `service_role` key in a browser bundle, rotate it immediately
+- Replace browser-supplied swap prices with a trusted server-side quote source and enforce freshness, slippage, asset allow-lists and transaction limits.
+- Redesign P2P transitions so only the correct party can perform each action; implement actual escrow custody and dispute resolution before describing funds as reserved.
+- Review every RLS policy, SQL function grant and Storage policy against the deployed project.
+- Confirm service-role and email-provider secrets exist only in server-side secret storage. Rotate any privileged secret if it was ever exposed.
+- Enable email confirmation, leaked-password protection, sensible rate limits/CAPTCHA and MFA policy.
+- Add server-side validation, monitoring, audit review, backups and incident-response procedures.
+- Obtain an independent security review before handling money or identity documents.
 
-### Storage
-- [ ] `kyc_documents` stays **private** (it already is)
-- [ ] Add a **file size limit** and MIME allow-list (`image/jpeg,image/png,image/webp`)
-- [ ] The bucket policies in `supabase-auth-fix-2.sql` restrict each user to their own folder
+## Reporting a security issue
 
-### Database
-- [ ] Run `supabase-auth-fix-1.sql`, then `-2.sql`, then `supabase-security-hardening.sql`
-- [ ] Turn on **Point-in-time recovery** (paid plans) before handling real money
-
-## 3. What the SQL files enforce (server side)
-
-Client code cannot be trusted, so the rules live in the database:
-
-- `profiles` — a user may edit their own name, theme, currency, language,
-  notification prefs, 2FA flag and KYC **document path**. They may **not**
-  change `is_admin`, `role`, `balance_usd`, `escrow_held_usd`,
-  `completed_trades_count`, `merchant`, or set `kyc_status = 'verified'`.
-- `user_assets` — users can read their own rows and insert a **zero-balance**
-  row. Quantity is written only by the wallet Edge Function / admin.
-- `p2p_trades` — column-level grants: the browser may only write `status`,
-  `matched_user_id`, `updated_at`. `escrow_status`, `tx_hash`,
-  `escrow_address`, `escrow_locked_amount`, `amount`, `price` are service-role
-  only. A taker cannot re-point an ad or rewrite its terms.
-- `withdrawal_requests` — can only be inserted as `pending`, with no hash and
-  no processed timestamp. Users cannot self-complete a payout.
-- `otp_codes` — revoked for `anon` and `authenticated` entirely.
-- `audit_log` — admin actions on other users' profiles are written
-  automatically by a trigger.
-
-## 4. Known gaps — things to fix next
-
-1. **`kyc_document_url` is user-controlled.** A user could point it at another
-   user's object path in the bucket. The storage policy still blocks reading
-   it, but the admin queue should sign URLs only for paths under the row's own
-   `id`. Consider moving the upload into an Edge Function.
-2. **`profiles` exposes email to any signed-in user via the p2p join**
-   (`select('id, first_name, ...')` is fine, but a future careless `select('*')`
-   would leak addresses). Consider a `public_profiles` view.
-3. **No server-side trade state machine.** The client moves a trade through
-   `matched → paid → completed`. A malicious client can send any transition.
-   Move the transitions into an Edge Function with the service role.
-4. **Swap has no server-side price oracle.** It runs on Coinlore prices fetched
-   in the browser. A modified client can quote any rate. Move quoting and
-   balance changes into an Edge Function.
-5. **No 2FA recovery codes.** If a user loses their phone they are locked out
-   and an admin has to unenroll the factor manually (Supabase → Auth → Users →
-   remove factor).
-6. **`exnyaexchanger@gmail`** in `profiles` is not a valid email address —
-   worth cleaning up so password reset never targets it.
-
-## 5. Deploying
-
-Because this is a static site, the CSP meta tag is the only header you control.
-If you move to Netlify / Vercel / Cloudflare Pages, add the same CSP **plus**
-`Strict-Transport-Security`, `X-Content-Type-Options: nosniff` and
-`Permissions-Policy` as real HTTP headers — they are stronger than the meta tag.
+Do not publish credentials, personal data or exploitable details in a public issue. Contact the repository owner privately with a concise description and reproduction steps.
