@@ -1,7 +1,6 @@
 # EXNYA — deployment and setup
 
-Ordered checklist. The app is a static site plus a Supabase project; nothing
-here needs a build step.
+EXNYA is currently a portfolio prototype, not a production financial application. This checklist is for local evaluation only. Do not connect real funds, collect real KYC documents or invite real customers.
 
 ---
 
@@ -29,11 +28,10 @@ Supabase Dashboard → **SQL Editor** → new query → paste → **Run**.
 | 1 | `supabase/migrations/001_rls_profiles_and_policies.sql` | Admin helper, RLS policies, grants |
 | 2 | `supabase/migrations/002_trigger_and_storage.sql` | Profile auto-create trigger, KYC storage policies |
 | 3 | `supabase/migrations/003_column_guards_and_audit.sql` | Stops self-approving KYC and self-crediting balances; audit trigger |
-| 4 | `supabase/migrations/004_swap_and_p2p_functions.sql` | `swap_execute()` and `p2p_transition()` — the only places money moves |
+| 4 | `supabase/migrations/004_swap_and_p2p_functions.sql` | prototype swap and P2P database functions |
 | 5 | `supabase/migrations/005_reset_rate_limits.sql` | Rate-limit tables for the reset function |
 
-Run them **in order**: 003 revokes things 001 granted, 004 replaces the policies
-003 created.
+Run them **in order**. These files are source migrations only; applying them does not make the app production safe. The swap function currently trusts browser-supplied price data, and the P2P flow is not backed by real escrow.
 
 Migrations are written to be re-runnable; if one reports
 `policy ... already exists`, it is safe to delete that `create policy` line and
@@ -119,7 +117,11 @@ QR code and a manual key; disabling requires a live code.
 
 ---
 
-## 7. Verify the deployment
+## 7. Prototype checks only
+
+The checks below verify interface wiring, not financial correctness, custody, legal compliance or production security. Do not use real funds or identity documents.
+
+
 
 | Check | Expected |
 |---|---|
