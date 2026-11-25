@@ -4,6 +4,10 @@ A cryptocurrency-exchange interface prototype built with HTML, CSS, JavaScript a
 
 > **Project status: prototype / portfolio project.** EXNYA is not a live cryptocurrency exchange, broker, custodian, payment service or investment product. Do not deposit funds, submit identity documents, or use it for real trading.
 
+## Portfolio case study
+
+See the [EXNYA project case study](https://michael-coker-dev.github.io/michael-coker-portfolio/exnya.html) for the project brief, interface scope, technologies and known limitations.
+
 ## What the project demonstrates
 
 - Multi-page responsive exchange interface
